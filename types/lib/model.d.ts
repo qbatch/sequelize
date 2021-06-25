@@ -35,7 +35,7 @@ export interface Transactionable {
   /**
    * Transaction to run query under
    */
-  transaction?: Transaction;
+  transaction?: Transaction | null;
 }
 
 export interface SearchPathable {
@@ -332,11 +332,12 @@ export interface WhereGeometryOptions {
  * WhereAttributeHash is in there for JSON columns.
  */
 export type WhereValue<TAttributes = any> =
-  | string // literal value
-  | number // literal value
-  | boolean // literal value
-  | Date // literal value
-  | Buffer // literal value
+  | string
+  | number
+  | bigint
+  | boolean
+  | Date
+  | Buffer
   | null
   | WhereOperators
   | WhereAttributeHash<any> // for JSON columns
@@ -378,7 +379,7 @@ export interface IncludeThroughOptions extends Filterable<any>, Projectable {
 /**
  * Options for eager-loading associated models, also allowing for all associations to be loaded at once
  */
-export type Includeable = typeof Model | Association | IncludeOptions | { all: true, nested?: true } | string;
+export type Includeable = ModelType | Association | IncludeOptions | { all: true, nested?: true } | string;
 
 /**
  * Complex include options
@@ -391,7 +392,7 @@ export interface IncludeOptions extends Filterable<any>, Projectable, Paranoid {
   /**
    * The model you want to eagerly load
    */
-  model?: typeof Model;
+  model?: ModelType;
 
   /**
    * The alias of the relation, in case the model you want to eagerly load is aliassed. For `hasOne` /
@@ -473,13 +474,13 @@ export type OrderItem =
   | [OrderItemAssociation, OrderItemAssociation, OrderItemAssociation, OrderItemColumn, string]
   | [OrderItemAssociation, OrderItemAssociation, OrderItemAssociation, OrderItemAssociation, OrderItemColumn]
   | [OrderItemAssociation, OrderItemAssociation, OrderItemAssociation, OrderItemAssociation, OrderItemColumn, string]
-export type Order = string | Fn | Col | Literal | OrderItem[];
+export type Order = Fn | Col | Literal | OrderItem[];
 
 /**
  * Please note if this is used the aliased property will not be available on the model instance
  * as a property but only via `instance.get('alias')`.
  */
-export type ProjectionAlias = readonly [string | Literal | Fn, string];
+export type ProjectionAlias = readonly [string | Literal | Fn | Col, string];
 
 export type FindAttributeOptions =
   | (string | ProjectionAlias)[]
@@ -718,7 +719,7 @@ export interface UpsertOptions<TAttributes = any> extends Logging, Transactionab
   /**
    * Return the affected rows (only for postgres)
    */
-  returning?: boolean;
+  returning?: boolean | (keyof TAttributes)[];
 
   /**
    * Run validations before the row is inserted
@@ -874,7 +875,7 @@ export interface UpdateOptions<TAttributes = any> extends Logging, Transactionab
   /**
    * Return the affected rows (only for postgres)
    */
-  returning?: boolean;
+  returning?: boolean | (keyof TAttributes)[];
 
   /**
    * How many rows to update (only for mysql and mariadb)
@@ -1231,7 +1232,7 @@ export interface ModelAttributeColumnReferencesOptions {
   /**
    * If this column references another table, provide it here as a Model, or a string
    */
-  model?: string | typeof Model;
+  model?: string | ModelType;
 
   /**
    * The column of the foreign table that this column references
@@ -1621,10 +1622,10 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
    * @param options These options are merged with the default define options provided to the Sequelize constructor
    * @return Return the initialized model
    */
-  public static init<M extends Model>(
-    this: ModelStatic<M>,
+  public static init<MS extends ModelStatic<Model>, M extends InstanceType<MS>>(
+    this: MS,
     attributes: ModelAttributes<M, M['_attributes']>, options: InitOptions<M>
-  ): Model;
+  ): MS;
 
   /**
    * Remove attribute from model definition
@@ -1659,7 +1660,7 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
     this: ModelStatic<M>,
     schema: string,
     options?: SchemaOptions
-  ): { new(): M } & typeof Model;
+  ): ModelCtor<M>;
 
   /**
    * Get the tablename of the model, taking schema into account. The method will return The name as a string
@@ -2086,7 +2087,9 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
    */
   public static update<M extends Model>(
     this: ModelStatic<M>,
-    values: Partial<M['_attributes']>,
+    values: {
+        [key in keyof M['_attributes']]?: M['_attributes'][key] | Fn | Col | Literal;
+    },
     options: UpdateOptions<M['_attributes']>
   ): Promise<[number, M[]]>;
 
@@ -2126,7 +2129,7 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
   /**
    * Unscope the model
    */
-  public static unscoped<M extends typeof Model>(this: M): M;
+  public static unscoped<M extends ModelType>(this: M): M;
 
   /**
    * A hook that is run before validation
@@ -2708,7 +2711,8 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
   /**
    * Returns the previous value for key from `_previousDataValues`.
    */
-  public previous<K extends keyof this>(key: K): this[K];
+  public previous(): Partial<TCreationAttributes>;
+  public previous<K extends keyof TCreationAttributes>(key: K): TCreationAttributes[K] | undefined;
 
   /**
    * Validates this instance, and if the validation passes, persists it to the database.
@@ -2742,8 +2746,13 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
   /**
    * This is the same as calling `set` and then calling `save`.
    */
-  public update<K extends keyof this>(key: K, value: this[K], options?: InstanceUpdateOptions<TModelAttributes>): Promise<this>;
-  public update(keys: object, options?: InstanceUpdateOptions<TModelAttributes>): Promise<this>;
+  public update<K extends keyof TModelAttributes>(key: K, value: TModelAttributes[K] | Col | Fn | Literal, options?: InstanceUpdateOptions<TModelAttributes>): Promise<this>;
+  public update(
+    keys: {
+        [key in keyof TModelAttributes]?: TModelAttributes[key] | Fn | Col | Literal;
+    },
+    options?: InstanceUpdateOptions<TModelAttributes>
+  ): Promise<this>;
 
   /**
    * Destroy the row corresponding to this instance. Depending on your setting for paranoid, the row will
@@ -2832,7 +2841,7 @@ export abstract class Model<TModelAttributes extends {} = any, TCreationAttribut
   public isSoftDeleted(): boolean;
 }
 
-export type ModelType = typeof Model;
+export type ModelType<TModelAttributes = any, TCreationAttributes = TModelAttributes> = new () => Model<TModelAttributes, TCreationAttributes>;
 
 // Do not switch the order of `typeof Model` and `{ new(): M }`. For
 // instances created by `sequelize.define` to typecheck well, `typeof Model`
